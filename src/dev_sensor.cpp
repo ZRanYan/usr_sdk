@@ -8,23 +8,12 @@ DEV_SENSOR::DEV_SENSOR()
 
 DEV_SENSOR::~DEV_SENSOR()
 {
-    m_sensor_stream_set(false);
-    if (-1 != this->video_fd)
-    {
-        close(this->video_fd);
-        this->video_fd = -1;
-    }
-    if (-1 != v4l2_fd)
-    {
-        close(v4l2_fd);
-        v4l2_fd = -1;
-    }
+    m_fd_release();
 }
 
-DEV_RTN DEV_SENSOR::dev_sensor_init(uint8_t index, DEV_SENSOR_TYPE type, uint8_t totalNum, uint8_t numBuffer, uint8_t timeOut, void *usr_data)
+DEV_RTN DEV_SENSOR::dev_sensor_init(uint8_t index, DEV_SENSOR_ATTRIBUTE att)
 {
-    char dev_name[32];
-    DEV_ROI mRoi = {
+    DEV_ROI m_roi = {
         .bitMode = SENSOR_8BIT,
         .binningMode = SENSOR_ROI,
         .x = 0,
@@ -33,47 +22,37 @@ DEV_RTN DEV_SENSOR::dev_sensor_init(uint8_t index, DEV_SENSOR_TYPE type, uint8_t
         .h = SENSOR_IMX566_ALL_PIXEL_HIGHT,
         .alignWidth = 0
     };
-    if(0 != numBuffer)
+    this->mBufferNum = (0 == att.bufferNum)?SENSOR_BUFFER_COUNT:att.bufferNum;
+    if(1 > att.sensorNum || 4 < att.sensorNum)
     {
-        this->mBufferNum = numBuffer;
-    }
-    if(1 != totalNum && 2 != totalNum)
-    {
-        DEBUG_LOG(SENSOR, ERROR, "invalid param:%d\n", totalNum);
+        DEBUG_LOG(SENSOR, ERROR, "invalid sensorNum param:%d\n", att.sensorNum);
         return RTN_INVALID_ARG;
     }
     this->index = index;
-    this->usr_data = usr_data;
-    if(SENSOR_IMX565 == type)
+    this->usr_data = att.usr_data;
+    m_roi.x = att.x;
+    m_roi.y = att.y;
+    m_roi.bitMode = this->mSensorAttr[(uint8_t)att.type].bit;
+    m_roi.w = ROI_LIMIT(att.w, (this->mSensorAttr[(uint8_t)att.type].pixel_width));
+    m_roi.h = ROI_LIMIT(att.w, (this->mSensorAttr[(uint8_t)att.type].pixel_hight));
+    memcpy(&this->mRoi, &m_roi, sizeof(m_roi));
+    this->m_sensorType = att.type;
+    this->totalNum = att.sensorNum;
+    if(0 != m_fd_init(att.v4l_sub_slot))
     {
-        mRoi.w = SENSOR_IMX565_ALL_PIXEL_WIDTH;
-        mRoi.h = SENSOR_IMX565_ALL_PIXEL_HIGHT;
-    }
-    else if(SENSOR_SC535 == type)
-    {
-        mRoi.bitMode = SENSOR_10BIT;
-        mRoi.w = SENSOR_SC535_ALL_PIXEL_WIDTH;
-        mRoi.h = SENSOR_SC535_ALL_PIXEL_HIGHT;
-    }
-    this->m_sensorType = type;
-    snprintf(dev_name, sizeof(dev_name),
-             SENSOR_DEV, index);
-    this->video_fd = open(dev_name, O_RDWR | O_NONBLOCK, 0);
-    // 按平台 media-ctl 拓扑，sensor subdev 与 video 节点存在固定偏移（常见为 +2）
-    // 例如: video0/video1 对应 v4l-subdev2/v4l-subdev3。
-    snprintf(dev_name, sizeof(dev_name),
-             SENSOR_SUB_DEV, index + totalNum);
-    this->v4l2_fd = open(dev_name, O_RDWR, 0);
-    if (this->video_fd < 0 || this->v4l2_fd < 0)
-    {
-        DEBUG_LOG(SENSOR, ERROR, "open %s error\n", dev_name);
         return RTN_FAIL;
     }
-    //获取sensor是否支持单目还是双目的
     this->buf_type = m_get_sensor_mp_lane();
-    dev_sensor_set_cap_timeout_value((0 == timeOut)?10000:timeOut*1000);
+    this->time_out = (0 == att.oot)?10000:att.oot;
+    dev_sensor_set_cap_timeout_value(this->time_out);
+    //自定义测是写入测试图
+    this->mTestMode = att.testPicMode;
+    if (0 != this->mTestMode)
+    {
+        dev_sensor_set_test_pic_value(this->mTestMode);
+    }
     //默认配置下roi的参数
-    dev_sesnor_set_roi_value(mRoi);
+    dev_sesnor_set_roi_value(this->mRoi);
     return RTN_OKAY;
 }
 
@@ -170,7 +149,6 @@ DEV_RTN DEV_SENSOR::dev_sensor_set_hflip_value(bool value)
 }
 DEV_RTN DEV_SENSOR::dev_sensor_set_vflip_value(bool value)
 {
-    
     int ret = 0;
     int64_t val = 0;
     val = value;
@@ -266,25 +244,7 @@ DEV_RTN DEV_SENSOR::dev_sensor_reg_set_value(DEV_SENSOR_REG_PARAM &reg)
 void DEV_SENSOR::m_sensor_aligned_set(IN DEV_ROI in, OUT SENSOR_FORMAT_ROI_PARAM& out, SENSOR_SOC_WIDTH& alignWidth)
 {
     const int MIN_H = SENSOR_IMX566_MIN_H, MIN_W = SENSOR_IMX566_MIN_W;
-    int MAX_H = SENSOR_IMX566_ALL_PIXEL_HIGHT, MAX_W = SENSOR_IMX566_ALL_PIXEL_WIDTH;
-    switch(this->m_sensorType)
-    {
-        case SENSOR_IMX566:
-            MAX_H = SENSOR_IMX566_ALL_PIXEL_HIGHT;
-            MAX_W = SENSOR_IMX566_ALL_PIXEL_WIDTH;
-            break;
-        case SENSOR_IMX565:
-            MAX_H = SENSOR_IMX565_ALL_PIXEL_HIGHT;
-            MAX_W = SENSOR_IMX565_ALL_PIXEL_WIDTH;
-            break;
-        case SENSOR_SC535:
-            MAX_H = SENSOR_SC535_ALL_PIXEL_HIGHT;
-            MAX_W = SENSOR_SC535_ALL_PIXEL_WIDTH;
-            break;
-        default:
-            DEBUG_LOG(SENSOR, ERROR, "this->m_sensorType:%d \r\n", this->m_sensorType);
-            break;
-    }
+    int MAX_H = this->mSensorAttr[(uint8_t)this->m_sensorType].pixel_hight, MAX_W = this->mSensorAttr[(uint8_t)this->m_sensorType].pixel_width;
     int h,w;
     memset(&out, 0, sizeof(out));
     DEBUG_LOG(SENSOR, INFO, "input x:%d y:%d w:%d h:%d bitMode:%d binningMode:%d \r\n", \
@@ -320,7 +280,7 @@ void DEV_SENSOR::m_sensor_aligned_set(IN DEV_ROI in, OUT SENSOR_FORMAT_ROI_PARAM
     }
     alignWidth.roi_width = w;
     alignWidth.sensor_width = ((0 == in.bitMode)?MAX_W:MAX_W*2);
-    alignWidth.soc_width = ALIGN_UP(alignWidth.sensor_width, WIDTH_ALIGN);
+    alignWidth.soc_width = ALIGN_UP(((0 == in.bitMode)?alignWidth.roi_width:alignWidth.roi_width*2), WIDTH_ALIGN);
     DEBUG_LOG(SENSOR, DEBUG, "roi_width:%d %d %d\r\n", alignWidth.roi_width, alignWidth.sensor_width, alignWidth.soc_width);
     DEBUG_LOG(SENSOR, DEBUG, "roi_hight:%d \r\n", out.height);
     return;
@@ -606,9 +566,48 @@ bool DEV_SENSOR::m_is_all_zero(const void *data, size_t size)
 
     return true;
 }
-DEV_RTN DEV_SENSOR::m_sensor_set_debug_pic(uint8_t testMode)
+
+int DEV_SENSOR::m_fd_init(uint8_t solt)
 {
-    struct v4l2_control ctrl;
+    char dev_name[32];
+    snprintf(dev_name, sizeof(dev_name),
+             SENSOR_DEV, this->index);
+    this->video_fd = open(dev_name, O_RDWR | O_NONBLOCK, 0);
+    // 按平台 media-ctl 拓扑，sensor subdev 与 video 节点存在固定偏移（常见为 +2）
+    // 例如: video0/video1 对应 v4l-subdev2/v4l-subdev3。
+    snprintf(dev_name, sizeof(dev_name),
+             SENSOR_SUB_DEV, this->index + solt);
+    this->v4l2_fd = open(dev_name, O_RDWR, 0);
+    if (this->video_fd < 0 || this->v4l2_fd < 0)
+    {
+        DEBUG_LOG(SENSOR, ERROR, "open %s error\n", dev_name);
+        return -1;
+    }
+    return 0;
+}
+
+int DEV_SENSOR::m_fd_release()
+{
+    dev_sensor_stream_set(false);
+    if (-1 != this->video_fd)
+    {
+        close(this->video_fd);
+        this->video_fd = -1;
+    }
+    if (-1 != v4l2_fd)
+    {
+        close(v4l2_fd);
+        v4l2_fd = -1;
+    }
+    sync();
+    return 0;
+}
+
+
+DEV_RTN DEV_SENSOR::dev_sensor_set_test_pic_value(uint8_t testMode)
+{
+    // struct v4l2_control ctrl;
+    int64_t val = 0;
     int ret = 0;
     if(3 < testMode)
     {
@@ -616,10 +615,12 @@ DEV_RTN DEV_SENSOR::m_sensor_set_debug_pic(uint8_t testMode)
         return RTN_FAIL;
     }
     DEBUG_LOG(SENSOR, INFO, "set testMode:%d\n", testMode);
-    memset(&ctrl, 0, sizeof(ctrl));
-    ctrl.id = V4L2_CID_CUSTOM_TEST;
-    ctrl.value = testMode; //
-    ret = ioctl(this->video_fd, VIDIOC_S_CTRL, &ctrl); //修改sensor的配置
+    // memset(&ctrl, 0, sizeof(ctrl));
+    val = testMode;
+    // ctrl.id = V4L2_CID_CUSTOM_TEST;
+    // ctrl.value = testMode; //
+    // ret = ioctl(this->video_fd, VIDIOC_S_CTRL, &ctrl); //修改sensor的配置
+    ret = ioctl(this->v4l2_fd, CAM_SET_CUSTOM_TEST, &val);
     if(0 != ret)
     {
         DEBUG_LOG(SENSOR, ERROR, "set testMode %d error ret %d \r\n", testMode, ret);
@@ -627,6 +628,24 @@ DEV_RTN DEV_SENSOR::m_sensor_set_debug_pic(uint8_t testMode)
     }   
     return RTN_OKAY;
 }
+
+DEV_RTN DEV_SENSOR::dev_sensor_set_power_on_off_value(bool onOff)
+{
+#if 0
+    // int64_t val = (onOff?1:0);
+    // int ret = 0;
+    DEBUG_LOG(SENSOR, INFO, "set CAM_SET_SENSOR_POWER_STATUS:%d\n", val);
+    // ret = ioctl(this->v4l2_fd, CAM_SET_SENSOR_POWER_STATUS, &val);
+    // if(0 != ret)
+    // {
+    //     DEBUG_LOG(SENSOR, ERROR, "set CAM_SET_SENSOR_POWER_STATUS %d error ret %d \r\n", val, ret);
+    //     return RTN_FAIL;
+    // }
+#endif
+    return RTN_OKAY;
+}
+
+
 void DEV_SENSOR::m_saveBufferToFile(const char* buffer, int size, const std::string& filePath)
 {
      std::ofstream file(filePath, std::ios::binary);
@@ -647,7 +666,7 @@ bool DEV_SENSOR::m_sensor_callback(const uint8_t buff_index, uint32_t sequence)
     g_pic_index++;
 #if USER_SENSOR_TEST
     std::snprintf(buffer, sizeof(buffer),
-                  "index_%d_frame_index_%d_w_%d_h_%d_s_%d_length_%d.raw",
+                  "./pic/index_%d_frame_index_%d_w_%d_h_%d_s_%d_length_%d.raw",
                   index, g_pic_index,
                   current_frame.width,
                   current_frame.height,
@@ -655,45 +674,14 @@ bool DEV_SENSOR::m_sensor_callback(const uint8_t buff_index, uint32_t sequence)
                   current_frame.all_bytes);
     std::string current_frame_string(buffer);
     std::cout<<current_frame_string<<std::endl;
-    this->m_sensor_set_debug_pic(g_pic_index%3 + 1);
+    this->dev_sensor_set_test_pic_value(g_pic_index%3 + 1);
     this->m_saveBufferToFile((char *)current_frame.data, \
            current_frame.all_bytes, current_frame_string);
-#endif 
+#endif
     if (nullptr != image_notifiers) {
         image_notifiers(current_frame, usr_data);
     }
     return true;
-}
-DEV_RTN DEV_SENSOR::m_sensor_dq_buffer(struct v4l2_buffer* v4l2_buf)
-{
-    int num_retries = 1;
-    int ret = 0;
-    fd_set fds;
-    FD_ZERO(&fds);
-    FD_SET(this->video_fd, &fds);
-    ret = select(this->video_fd + 1, &fds, NULL, NULL, NULL); // 修改为无线等待模式
-    if (ret <= 0)
-    {
-        DEBUG_LOG(SENSOR, ERROR, "select error ret:%d \n", ret);
-        return RTN_FAIL;
-    }
-    // v4l2_buf->type = buf_type;
-    // v4l2_buf->memory = memory_type;
-    do
-    {
-        ret = ioctl(this->video_fd, VIDIOC_DQBUF, v4l2_buf);
-        if (ret == 0)
-        {
-            this->m_sensor_callback(v4l2_buf->index, v4l2_buf->sequence);
-            return RTN_OKAY;
-        }
-        else if (num_retries-- <= 0)
-        {
-            DEBUG_LOG(SENSOR, ERROR, "VIDIOC_DQBUF error ret:%d num_retries:%d\n", ret, num_retries);
-            break;
-        }
-    } while (ret);
-    return RTN_FAIL;
 }
 
 void DEV_SENSOR::m_sensor_threads(uint8_t index)
@@ -732,7 +720,11 @@ void DEV_SENSOR::m_sensor_threads(uint8_t index)
             }
             if(0x2001 == v4l2_buf.flags)
             {
+                // static auto old = std::chrono::steady_clock::now();
                 // auto  start = std::chrono::steady_clock::now();
+                // int64_t   dur = std::chrono::duration_cast<std::chrono::microseconds>(start - old).count();
+                // printf("pld:%lld us \r\n", (long long)dur);
+                // old = start;
                 this->m_sensor_callback(v4l2_buf.index, v4l2_buf.sequence);
                 // auto  end = std::chrono::steady_clock::now();
                 // int64_t   dur = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
@@ -748,7 +740,7 @@ void DEV_SENSOR::m_sensor_threads(uint8_t index)
     }
 }
 
-DEV_RTN DEV_SENSOR::m_sensor_stream_set(bool isOpen)
+DEV_RTN DEV_SENSOR::dev_sensor_stream_set(bool isOpen)
 {
     DEV_RTN ret = RTN_OKAY;
     if (true == isOpen)
@@ -854,9 +846,10 @@ DEV_RTN DEV_SENSOR::m_sensor_roi_set(const SENSOR_FORMAT_ROI_PARAM &roi,SENSOR_S
     int ret;
     struct v4l2_format mFormat;
     struct v4l2_pix_format_mplane *pix_mp;
-    this->m_sensor_stream_set(false);
+    this->dev_sensor_stream_set(false);
     memset(&mFormat, 0, sizeof(mFormat));
     mFormat.type = this->buf_type;
+    m_sensor_set_stride(alignWidth.soc_width);
     ret = ioctl(this->video_fd, VIDIOC_G_FMT, &mFormat);
     if (ret < 0)
     {
@@ -873,18 +866,21 @@ DEV_RTN DEV_SENSOR::m_sensor_roi_set(const SENSOR_FORMAT_ROI_PARAM &roi,SENSOR_S
         DEBUG_LOG(SENSOR, ERROR, "CAM_SET_ROI_FORMAT failed ret:%d errno:%d %s\n", ret, errno, strerror(errno));
         return RTN_FAIL;
     }
-    m_sensor_set_stride(alignWidth.soc_width);
+    // m_sensor_set_stride(alignWidth.soc_width);
     if(V4L2_BUF_TYPE_VIDEO_CAPTURE == this->buf_type)
     {
-        mFormat.fmt.pix.width = alignWidth.sensor_width;
+        mFormat.fmt.pix.width = alignWidth.roi_width;
+        DEBUG_LOG(SENSOR, WARN, "roi_width:%d sensor_width:%d soc_width:%d\r\n", \
+                            alignWidth.roi_width, alignWidth.sensor_width, alignWidth.soc_width);
         mFormat.fmt.pix.height = roi.height;
         mFormat.fmt.pix.pixelformat = bitModePixfmt[roi.bitMode];
+        mFormat.fmt.pix.bytesperline = alignWidth.soc_width;
         DEBUG_LOG(SENSOR, INFO, "bit:%d width:%d height:%d soc_width:%d\r\n", roi.bitMode, mFormat.fmt.pix.width, mFormat.fmt.pix.height, alignWidth.soc_width);
     }
     else
     {
         pix_mp = &mFormat.fmt.pix_mp;
-        pix_mp->width = alignWidth.sensor_width;
+        pix_mp->width = alignWidth.roi_width;
         pix_mp->height = roi.height;
         pix_mp->pixelformat = bitModePixfmt[roi.bitMode];
         pix_mp->field = V4L2_FIELD_NONE;
@@ -906,11 +902,12 @@ DEV_RTN DEV_SENSOR::m_sensor_roi_set(const SENSOR_FORMAT_ROI_PARAM &roi,SENSOR_S
     {
         DEBUG_LOG(SENSOR, INFO, "VIDIOC_S_FMT ok ret:%d\n", ret);
     }
-    this->m_sensor_stream_set(true);
+    this->dev_sensor_stream_set(true);
     return RTN_OKAY;
 }
 DEV_RTN DEV_SENSOR::dev_sesnor_set_roi_value(const DEV_ROI &roi) // DEV_ROI会对传参进行对齐判断
 {
+    // memcpy(&this->mRoi, &roi, sizeof(DEV_ROI));
     m_sensor_aligned_set(roi, this->m_RoiParam, this->m_WidthInfo);
     if (RTN_OKAY != m_sensor_roi_set(this->m_RoiParam, this->m_WidthInfo))
         return RTN_FAIL;

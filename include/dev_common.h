@@ -1,19 +1,10 @@
-/**
- * @file dev_common.h
- * @author yangzhaoran (yangzhaoran@bopixel.com)
- * @brief 
- * @version 0.5.5
- * @date 2026-06-05
- * 
- * @copyright Copyright (c) 2026
- * 
- */
+
 #ifndef _DEV_COMMON_H_
 #define _DEV_COMMON_H_
 #include <cstdint>
 #include <string>
-
-#define USER_SENSOR_TEST 0
+#include <vector>
+#include <iostream>
 #define DRIVER_VER_MAX_LEN 128
 
 #ifndef IN
@@ -37,6 +28,8 @@ typedef enum {
 typedef enum{
     CAM_INDEX_ONE = 1<<0,
     CAM_INDEX_TWO = 1<<1,
+    CAM_INDEX_THREE = 1<<2,
+    CAM_INDEX_FOUR = 1<<3,
     CAM_INDEX_ALL = 0xff,
 }DEV_CAM_INDEX; // CAM_INDEX_ONE|CAM_TWO //CAM_INDEX_ALL
 
@@ -44,8 +37,32 @@ typedef enum{
     SENSOR_IMX566 = 0,
     SENSOR_IMX565 =1,
     SENSOR_SC535 = 2,
-    SENSOR_GMAX3405 = 3
+    SENSOR_GMAX3405 = 3,
+    SENSOR_OG02C1B = 4,
+    SENSOR_OV5640 = 5,
+    SENSOR_OG05B2B = 6,
+    SENSOR_GMAX3412 = 7
 }DEV_SENSOR_TYPE;
+
+/**
+ * @brief DLP光机的类型
+ * 
+ */
+typedef enum{
+    DLP_4710 = 0,
+    DLP_4052 = 1,
+}DEV_DLP_TYPE;
+/**
+ * @brief 配置DLP的电流参数
+ * 
+ */
+typedef struct
+{
+    uint16_t blue_cur; //dlp4710使用2字节，dlp4052只有低位字节有效
+    uint8_t  green_cur; //dlp4710光机参数无效
+    uint8_t  red_cur; //dlp4710光机参数无效
+}DEV_DLP_CURRENT_VALUE;
+
 /**
  * @brief 针对SC535HGS配置连续抓拍参数需要设置曝光时间和帧周期时间
  * 索尼的sensor不需要配置这个
@@ -67,9 +84,15 @@ typedef struct
 {
     DEV_CAM_INDEX index;// 软件想要配置第几个sensor
     DEV_SENSOR_TYPE type;//sensor的类型
-    uint8_t sensorNum; //1-代表单目，2-代表双目,代表硬件上预留的sensor数量
+    uint16_t x; 
+    uint16_t y;
+    uint16_t w; //如不需要配置ROI参数，这个地方赋值为0
+    uint16_t h; //如果不需要配置ROI参数，这个地方赋值为0
+    uint8_t sensorNum; //1-代表单目，2-代表双目,代表硬件上实际插入的sensor数量
+    uint8_t v4l_sub_slot; //非gmsl相机,单目配置参数为1，双目配置参数2,点胶机gmsl相机上配置4
     uint8_t bufferNum; //出图的mmap的buffer数量
-    uint8_t oot;        //出图超时时间，单位：秒
+    int oot;        //出图超时时间，单位：毫秒
+    uint8_t testPicMode; //0-代表不配置测试图模式
     void *usr_data;     //传递自定义参数
 }DEV_SENSOR_ATTRIBUTE;
 
@@ -77,6 +100,7 @@ typedef enum{
     SENSOR_8BIT = 0,
     SENSOR_10BIT = 1,
     SENSOR_12BIT = 2,
+    SENSOR_16BIT = 3
 }DEV_CAM_BIT;
 
 typedef enum{
@@ -206,6 +230,52 @@ typedef struct DEV_DLP_SELECT_S{
     uint8_t num_pattern;
     DEV_DLP_EXP exp_s;
 }DEV_DLP_PATTERN_GROUP_INFO;
+/**
+ * @brief DLP45光机设置图卡顺序专用
+ * @param pattern_num - 设置投影多少张图【例如设备内一共有47张图，只要投影17张图则赋值17】
+ * @param img_num - 以24bit为区分的话，要设置的图卡涉及多少个24bit就赋值多少【例如47张图，但是其中第一张图是8bit则一共54bit，涉及3组】
+ * @param bit_depth - 1-代表1bit，8-代表8bit
+ * @param image_squ - 设置图卡顺序涉及的图组顺序【例如先设置第2组图卡，再设置第1组图卡，再设置第2组图卡，则依次填入1 0 1】
+ * @param pattern_squ - 每组图卡内图卡的顺序【例如设置第一组内的顺序，则依次填入0 8,9,10......23，因为第一组内的第一张图是8bit】
+ * @param pre_num_squ - 第多少张图片是一组【第一张图(8bit)占第一组24的0-7位，剩下的图片一张占一位，故第一组是17张图;第二组都是1bit图，故第二个值给17+24=41】
+ * 
+ */
+typedef struct
+{
+    uint8_t pattern_num;  
+    uint8_t img_num;  
+    uint32_t expo_time;//us
+    uint32_t period_time;//us
+    std::vector<uint8_t> bit_depth;
+    std::vector<uint8_t> image_squ;
+    std::vector<uint8_t> pattern_squ;
+    std::vector<uint8_t> pre_num_squ; 
+}DEV_DLP_PATTERN_ORDER_SET;
+
+/**
+ * @brief DLP触发类型
+ * 
+ */
+typedef enum
+{
+    TRIG_PAUSE = 0,
+    TRIG_CONTINUOUS = 1,
+}DEV_DLP_TRIG_TYPE;
+/**
+ * @brief 触发类型，仅支持dlp4052
+ * 
+ */
+typedef enum
+{
+    TRIG_VIDEO = 0,
+    TRIG_PATTERN = 1,
+}DEV_DLP_TRIG_MODE;
+
+typedef struct
+{
+    uint32_t exposure_time; //单位微秒
+    uint32_t period_time;
+}DEV_DLP_EXPOSURE_PERIOD_SET;
 
 typedef struct{
     uint32_t r_expo; //时间单位微秒
@@ -219,6 +289,16 @@ typedef struct{
 typedef struct{
     bool rgbw_on[4];
 }DEV_IO_RGB_TRIG_SET;//配置依次亮灯的配置
+/**
+ * @brief 灯的开关只能开一个
+ * 
+ */
+typedef struct{
+    bool ctlMethod; //Control_method(0:Manual, 1:Pattern)
+    bool red_on;    //开关
+    bool green_on;
+    bool blue_on;
+}DEV_DLP_LED_SET;
 
 typedef struct{
     uint8_t mode;      //0-代表仅dlp闪烁,不联动rgb灯，后面的参数不生效，1-代表dlp+rgb联动方式

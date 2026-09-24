@@ -16,7 +16,7 @@
 #include "dev_common.h"
 
 #define DLP_NUM 4
-#define SENSOR_MAX_NUM 2
+#define SENSOR_MAX_NUM 4
 
 class DEV_SENSOR;
 class DEV_DLP;
@@ -28,7 +28,7 @@ class CAM_DEV
 public:
     CAM_DEV();
     ~CAM_DEV();
-    void dev_get_version(DEV_VERSION_INFO_STRUCT &ver);
+    DEV_RTN dev_get_version(DEV_VERSION_INFO_STRUCT &ver);
     void dev_set_debug_log(DEV_LOG_SET_PARAM logSet);
 public:
     DEV_RTN dev_init(DEV_SENSOR_ATTRIBUTE sensor, DEV_CAP_TYPE type);
@@ -52,12 +52,37 @@ public: //配置sensor的地方
     DEV_RTN dev_sensor_set_roi(DEV_CAM_INDEX id, const DEV_ROI &roi);
     DEV_RTN dev_sensor_get_temp(DEV_CAM_INDEX id, float& temp);
     DEV_RTN dev_sensor_reg_set(DEV_CAM_INDEX id, DEV_SENSOR_REG_PARAM &reg);
+    /**
+     * @brief 针对自由出流的模式下，开关流的操作函数，一般在外触发不需要配置
+     * 
+     * @param id 
+     * @param enable true:开流模式，false:关流模式
+     * @return DEV_RTN 
+     */
+    DEV_RTN dev_sensor_set_stream_status(DEV_CAM_INDEX id, bool enable);
+
+    /**
+     * @brief 配置sensor出测试图
+     * 
+     * @param id 
+     * @param mode 0-正常出图，其它为测试图的模式值
+     * @return DEV_RTN 
+     */
+    DEV_RTN dev_sensor_set_test_pic(DEV_CAM_INDEX id, uint8_t mode);
+    // DEV_RTN dev_sensor_set_power_on_off(DEV_CAM_INDEX id, bool onOff);
 public:
     DEV_RTN dev_dlp_find(int (&arr)[DLP_NUM]);
-    DEV_RTN dev_dlp_get_version(std::string& ver);
+    DEV_RTN dev_dlp_get_version(std::string& ver); //支持dlp4052
+    /**
+     * @brief 获取dlp的类型
+     * 
+     * @param type 
+     * @return DEV_RTN 
+     */
+    DEV_RTN dev_dlp_get_type(DEV_DLP_TYPE& type);
     DEV_RTN dev_dlp_get_temp(uint8_t index, float& temp);
-    DEV_RTN dev_dlp_set_current(uint8_t index, uint16_t current);
-    DEV_RTN dev_dlp_set_current_all(uint16_t current);
+    DEV_RTN dev_dlp_set_current(uint8_t index, DEV_DLP_CURRENT_VALUE current); 
+    DEV_RTN dev_dlp_set_current_all(uint16_t current);//仅支持dlp30
     /**
      * @brief 获取dlp的电流值
      * 
@@ -65,17 +90,67 @@ public:
      * @param pwm - 获取dlp的电流值
      * @return DEV_RTN 
      */
-    DEV_RTN dev_dlp_get_current(uint8_t index, uint16_t& pwm);
-
+    DEV_RTN dev_dlp_get_current(uint8_t index, DEV_DLP_CURRENT_VALUE& pwm);
+    DEV_RTN dev_dlp_config_pwm_polarity(uint8_t index, bool readOrwrite, uint8_t &invert);
     DEV_RTN dev_dlp_get_min_expo(uint8_t index, DEV_DLP_EXP &param);
     DEV_RTN dev_dlp_get_group_info(uint8_t index, DEV_DLP_PATTERN_GROUP_INFO &param);
     DEV_RTN dev_dlp_set_groups_info(uint8_t index, std::vector<DEV_DLP_PATTERN_GROUP_INFO> groups);
-
     DEV_RTN dev_dlp_trigonce(uint8_t index);
-    DEV_RTN dev_dlp_set_delay_invert(uint8_t index, bool isInvert, uint32_t delayUs);
-    DEV_RTN dev_dlp_updata_falsh(uint8_t index, const char* path);
+    /**
+     * @brief 配置dlp翻转和延时时间
+     * 
+     * @param index 
+     * @param isInvert 
+     * @param delayUs ：仅对dlp4710有效，dlp4502这个参数忽略
+     * @return DEV_RTN 
+     */
+    DEV_RTN dev_dlp_set_delay_invert(uint8_t index, bool isInvert, uint32_t delayUs);//复用支持dlp4502
+    DEV_RTN dev_dlp_updata_falsh(uint8_t index, const char* flash, const char* config);
     DEV_RTN dev_dlp_set_long_short_flip(uint8_t index, bool long_flip, bool short_flip);
+    DEV_RTN dev_dlp_set_trig_type(uint8_t index, DEV_DLP_TRIG_TYPE type);
+    DEV_RTN dev_dlp_trig_in_config(uint8_t index, bool enable, bool polarity);
+    DEV_RTN dev_dlp_set_source_mode(uint8_t index, DEV_DLP_TRIG_MODE mode); //仅支持dlp4052
+    DEV_RTN dev_dlp_get_source_mode(uint8_t index, DEV_DLP_TRIG_MODE &mode); //仅支持dlp4052
+    /**
+     * @brief DLPC350 序列校验流程
+     * 
+     * @param index 
+     * @param status 
+     * @return DEV_RTN 
+     */
+    DEV_RTN dev_dlp_get_validate_status(uint8_t index, uint8_t &status); //仅支持dlp4052
+    /**
+     * @brief 配置dlp开关
+     * 
+     * @param index 
+     * @param enable 
+     * @return DEV_RTN 
+     */
+    DEV_RTN dev_dlp_set_on_off(uint8_t index, bool enable); //仅支持dlp4052
+    /**
+     * @brief 
+     * 
+     * @param index 代表配置那个dlp的下坐标
+     * @param readOrwrite 0-获取参数 1-配置参数
+     * @param ledSet 传参结构体
+     * @return DEV_RTN 
+     */
+    DEV_RTN dev_dlp_led_config(uint8_t index, bool readOrwrite, DEV_DLP_LED_SET &ledSet);//仅支持dlp4052
+    DEV_RTN dev_dlp_exp_period_config(uint8_t index, bool readOrwrite, DEV_DLP_EXPOSURE_PERIOD_SET &set);//仅支持dlp4052
+    DEV_RTN dev_dlp_get_pattern_trigger_mode(uint8_t index, uint8_t &mode);//仅支持dlp4052
+    /**
+     * @brief 软件复位命令
+     * 
+     * @param index 
+     * @param ver ：复位后，会执行读取版本号信息
+     * @return DEV_RTN 
+     */
+    DEV_RTN dev_dlp_set_reboot(uint8_t index, uint32_t &ver);//仅支持dlp4052
+    DEV_RTN dev_dlp_set_lut(uint8_t index, const DEV_DLP_PATTERN_ORDER_SET &set);
 
+    DEV_RTN dev_dlp_set_load_timing(uint8_t index, uint8_t image_index,uint8_t num);
+    DEV_RTN dev_dlp_get_load_timing(uint8_t index, uint32_t &load_time);
+    DEV_RTN dev_dlp_get_status(uint8_t index, uint8_t &hwStatus, uint8_t &sysStatus, uint8_t &mainStatus);
 public: //配置io的地方
     DEV_RTN dev_io_get_version(std::string& ver);
     /**

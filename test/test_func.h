@@ -34,6 +34,8 @@
 
 using namespace std;
 
+#define ALIGN_UP_64(x)   (((x) + 63) & ~63)
+
 typedef enum {
     BUFFER_EMPTY = 0,
     BUFFER_WRITING,
@@ -84,7 +86,8 @@ typedef enum
     DLP_RGB_HYBRID_FLASH = 1, //混合闪
     DLP_FLASH_SEPARATE = 2, //DLP单独闪
     DLP_CALL_BACK_TEST = 3,
-    DLP_SELF_TEST = 4 //半成品自动化测试
+    DLP_SELF_TEST = 4, //半成品自动化测试
+    USR_DEBUG_TEST = 5
 }USR_DEBUG_TEST_TYPE;
 
 typedef enum
@@ -98,6 +101,7 @@ typedef enum
 struct DEV_Param
 {
     int SET_NUM;
+    bool triggerType; //false-默认低电平触发，true-默认高电平触发
     std::atomic<int> g_dlp_index[2];
     int SET_PIC_NUM;
     std::atomic<int> g_pic_index[2];
@@ -108,7 +112,9 @@ struct DEV_Param
     bool g_is_dual;
     EMBEDDED_DEVICE_TYPE g_device_type;
     USR_DEBUG_TEST_TYPE g_is_debug_test_flag;
-    RingBuffer* g_rb; //环形队列保存的数据
+    //关于缓存队列的参数配置
+    FrameInfo   g_frame_set;  //关于配置sensor保存frame的参数的地方
+    RingBuffer  *g_rb; //环形队列保存的数据
 };
 
 struct CmdContext
@@ -154,8 +160,7 @@ void sensor_set_hv_flip(CAM_DEV *dev, BOARD_TYPE type, bool isEnable);
 void sensor_set_black(CAM_DEV *dev, BOARD_TYPE type, uint16_t value);
 void sensor_get_temp_value(CAM_DEV *dev);
 int m_get_count_wildcard(const char *str);
-void dev_set_dlp_status(CAM_DEV *dev, bool isPrint);
-
+void dev_set_dlp_status(CAM_DEV *dev, bool trigType, bool isPrint);
 RingBuffer* initRingBuffer(FrameInfo *mParam);
 int producerPut(RingBuffer* rb, const uint8_t* rawData, size_t dataLen, char *fileName);
 void destroyRingBuffer(RingBuffer* rb);
@@ -172,7 +177,7 @@ void dev_set_io_rgb_status(CAM_DEV *dev, uint8_t set);
 void dev_set_io_led_status(CAM_DEV *dev, int index);
 void dev_set_io_enable_dlp_usb(CAM_DEV *dev, int index);
 void dev_get_dlp_ver(CAM_DEV *dev, string &ver, bool isPrint);
-void sensor_set_roi(CAM_DEV *dev, DEV_CAM_INDEX type);
+void sensor_set_roi(struct CmdContext &ctx);
 void dev_get_io_ver(CAM_DEV *dev, string &ver, bool isPrint);
 void sensor_image_self_test_save(DEV_IMG_DEF frame, void *usr_data);
 void save_test_log_result(CAM_DEV *dev, struct DEV_Param *devParam);
